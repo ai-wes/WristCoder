@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -6,31 +6,37 @@ import {
   StyleSheet,
   SafeAreaView,
   ActivityIndicator,
-  ScrollView
+  ScrollView,
+  Dimensions
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
+import { Canvas, Circle, Group } from "@shopify/react-native-skia";
 
-const WEBSOCKET_URL = "ws://192.168.1.224:8888/ws";
+const WEBSOCKET_URL = "wss://wristcode.emotion-ai.io/ws";
+const { width, height } = Dimensions.get("window");
+const VISUALIZATION_SIZE = Math.min(width, height) * 0.6;
 
 const AIAssistantGUI = () => {
   const [status, setStatus] = useState("Idle");
   const [recording, setRecording] = useState();
   const [isRecording, setIsRecording] = useState(false);
   const [response, setResponse] = useState("");
-  const [code, setCode] = useState("");
-  const [activeTab, setActiveTab] = useState("chat");
   const [isProcessing, setIsProcessing] = useState(false);
   const [audioQueue, setAudioQueue] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
+  const [codeOutput, setCodeOutput] = useState([]);
+  const [activeTab, setActiveTab] = useState("chat");
   const soundObjectRef = useRef(null);
   const websocketRef = useRef(null);
+  const [particles, setParticles] = useState([]);
 
   useEffect(() => {
     connectWebSocket();
+    setupAudio();
     return () => {
       if (websocketRef.current) {
         websocketRef.current.close();
@@ -43,6 +49,29 @@ const AIAssistantGUI = () => {
       playNextAudio();
     }
   }, [audioQueue, isPlaying]);
+
+  const setupAudio = async () => {
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        interruptionModeIOS: InterruptionModeIOS.DuckOthers
+      });
+
+      // For iOS, we need to set the category to ensure playback through the speaker
+      if (Platform.OS === "ios") {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+          interruptionModeIOS: InterruptionModeIOS.DuckOthers
+        });
+      }
+    } catch (error) {
+      console.error("Error setting up audio:", error);
+    }
+  };
 
   const connectWebSocket = () => {
     const ws = new WebSocket(WEBSOCKET_URL);
@@ -73,7 +102,6 @@ const AIAssistantGUI = () => {
   const handleWebSocketMessage = (data) => {
     switch (data.type) {
       case "text":
-        console.log("Received text message:", data.text);
         setChatHistory((prevHistory) => [
           ...prevHistory,
           { type: "user", text: data.text }
@@ -83,15 +111,27 @@ const AIAssistantGUI = () => {
         setResponse(data.text);
         setChatHistory((prevHistory) => [
           ...prevHistory,
-          { type: "response", text: data.text }
+          { type: "ai", text: data.text }
         ]);
         break;
       case "audio":
         setAudioQueue((prevQueue) => [...prevQueue, data.audio]);
         break;
-      case "reset_confirmed":
+      case "code_output":
+        setCodeOutput((prevOutput) => [
+          ...prevOutput,
+          { type: "code", content: data.text }
+        ]);
+        break;
+      case "chat":
+        setChatHistory((prevHistory) => [
+          ...prevHistory,
+          { type: "ai", text: data.text }
+        ]);
+        break;
+      case "agent_execution_result":
         setStatus("Idle");
-        setIsProcessing(false);
+        break;
     }
 
     setIsProcessing(false);
@@ -109,7 +149,6 @@ const AIAssistantGUI = () => {
     soundObjectRef.current = soundObject;
 
     try {
-      // Create a temporary file to store the audio data
       const tempFile = `${
         FileSystem.cacheDirectory
       }/temp_audio_${Date.now()}.wav`;
@@ -118,13 +157,13 @@ const AIAssistantGUI = () => {
       });
 
       await soundObject.loadAsync({ uri: tempFile });
+      await soundObject.setVolumeAsync(1.0); // Ensure full volume
       await soundObject.playAsync();
       soundObject.setOnPlaybackStatusUpdate((status) => {
         if (status.didJustFinish) {
           setAudioQueue((prevQueue) => prevQueue.slice(1));
           soundObject.unloadAsync().then(() => {
             setIsPlaying(false);
-            // Delete the temporary file
             FileSystem.deleteAsync(tempFile, { idempotent: true });
           });
         }
@@ -168,7 +207,6 @@ const AIAssistantGUI = () => {
     setRecording(undefined);
     setIsRecording(false);
 
-    // Send audio to backend
     if (
       websocketRef.current &&
       websocketRef.current.readyState === WebSocket.OPEN
@@ -186,62 +224,121 @@ const AIAssistantGUI = () => {
   };
 
   const refreshContent = () => {
-    // Reset all states to their initial values
     setStatus("Idle");
     setRecording(undefined);
     setIsRecording(false);
     setResponse("");
-    setCode("");
-    setActiveTab("chat"); // Assuming "chat" is the initial tab
     setIsProcessing(false);
     setAudioQueue([]);
     setIsPlaying(false);
     setChatHistory([]);
-
-    // Stop and unload any playing audio
+    setCodeOutput([]);
     if (soundObjectRef.current) {
       soundObjectRef.current.stopAsync();
       soundObjectRef.current.unloadAsync();
     }
 
-    // Close and reconnect the WebSocket to ensure a fresh start
     if (websocketRef.current) {
-      websocketRef.current.close(); // This will trigger the onclose event which sets the status to "Disconnected"
-      connectWebSocket(); // Reconnect the WebSocket
+      websocketRef.current.close();
+      connectWebSocket();
     }
   };
+
+  const updateParticles = (audioData) => {
+    const centerX = VISUALIZATION_SIZE / 2;
+    const centerY = VISUALIZATION_SIZE / 2;
+    const audioValue = Math.max(0, Math.min(1, (audioData[0] + 160) / 160));
+
+    const newParticles = Array(100)
+      .fill(0)
+      .map((_, index) => {
+        const angle = (index / 100) * Math.PI * 2;
+        const distance = audioValue * VISUALIZATION_SIZE * 0.4;
+        return {
+          x: centerX + Math.cos(angle) * distance,
+          y: centerY + Math.sin(angle) * distance,
+          size: 2 + audioValue * 3,
+          color: `rgba(0, ${Math.floor(255 * audioValue)}, 0, 0.8)`
+        };
+      });
+
+    setParticles(newParticles);
+  };
+
+  const ParticleVisualization = () => (
+    <Canvas style={styles.canvas}>
+      <Group>
+        <Circle
+          cx={VISUALIZATION_SIZE / 2}
+          cy={VISUALIZATION_SIZE / 2}
+          r={VISUALIZATION_SIZE / 2 - 10}
+          color="rgba(0, 255, 0, 0.1)"
+        />
+        <Circle
+          cx={VISUALIZATION_SIZE / 2}
+          cy={VISUALIZATION_SIZE / 2}
+          r={VISUALIZATION_SIZE / 3}
+          color="rgba(0, 255, 0, 0.2)"
+        />
+        {particles.map((particle, index) => (
+          <Circle
+            key={index}
+            cx={particle.x}
+            cy={particle.y}
+            r={particle.size}
+            color={particle.color}
+          />
+        ))}
+      </Group>
+    </Canvas>
+  );
+
   const renderContent = () => {
     if (isProcessing) {
-      return <ActivityIndicator size="large" color="#2196F3" />;
+      return <ActivityIndicator size="large" color="#00ff00" />;
     }
     return (
       <ScrollView style={styles.contentScrollView}>
-        {activeTab === "chat" ? (
-          chatHistory.map((item, index) => (
-            <View key={index} style={styles.messageContainer}>
-              <Text
+        <View style={styles.visualizerContainer}>
+          <ParticleVisualization />
+        </View>
+        {activeTab === "chat"
+          ? chatHistory.map((item, index) => (
+              <View
+                key={index}
                 style={[
-                  styles.chatMessage,
-                  item.type === "response"
-                    ? styles.aiMessage
-                    : styles.userMessage
+                  styles.messageContainer,
+                  item.type === "ai"
+                    ? styles.aiMessageContainer
+                    : styles.userMessageContainer
                 ]}
               >
-                {item.type === "response" ? "AI: " : "User: "} {item.text}
-              </Text>
-            </View>
-          ))
-        ) : (
-          <Text style={styles.contentText}>{code}</Text>
-        )}
+                <View style={styles.glassEffect}>
+                  <Text
+                    style={[
+                      styles.chatMessage,
+                      item.type === "ai" ? styles.aiMessage : styles.userMessage
+                    ]}
+                  >
+                    {item.type === "ai" ? "AI: " : "User: "} {item.text}
+                  </Text>
+                </View>
+              </View>
+            ))
+          : codeOutput.map((item, index) => (
+              <View key={index} style={styles.codeBlock}>
+                <Text style={styles.codeText}>{item.content}</Text>
+              </View>
+            ))}
       </ScrollView>
     );
   };
+
   return (
     <SafeAreaView style={styles.container}>
       <LinearGradient colors={["#000000", "#1a1a1a"]} style={styles.background}>
         <View style={styles.statusBar}>
-          <Text style={styles.statusText}>STATUS</Text>
+          <Text style={styles.statusText}>Status: </Text>
           <View
             style={[
               styles.statusIndicator,
@@ -249,7 +346,7 @@ const AIAssistantGUI = () => {
                 backgroundColor:
                   status === "Idle" || status === "Connected"
                     ? "#4CAF50"
-                    : "#FFA500"
+                    : "#FF4136"
               }
             ]}
           />
@@ -260,7 +357,7 @@ const AIAssistantGUI = () => {
                 color:
                   status === "Idle" || status === "Connected"
                     ? "#4CAF50"
-                    : "#FFA500"
+                    : "#FF4136"
               }
             ]}
           >
@@ -269,10 +366,6 @@ const AIAssistantGUI = () => {
         </View>
 
         <View style={styles.content}>
-          <View style={styles.modelSelector}>
-            <Text style={styles.modelText}>Interpreter Model</Text>
-          </View>
-
           <View style={styles.buttonContainer}>
             <TouchableOpacity
               style={[
@@ -349,6 +442,21 @@ const styles = StyleSheet.create({
     fontSize: 18,
     marginLeft: 10
   },
+  visualizerContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20
+  },
+  canvas: {
+    width: VISUALIZATION_SIZE,
+    height: VISUALIZATION_SIZE
+  },
+  bottomContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+
   content: {
     flex: 1,
     padding: 20,
@@ -399,32 +507,47 @@ const styles = StyleSheet.create({
     padding: 10
   },
   chatMessage: {
+    fontSize: 18
+  },
+  userMessage: {
+    color: "white"
+  },
+  aiMessage: {
+    color: "white"
+  },
+  glassEffect: {
+    backgroundColor: "rgba(19, 19, 19, 0.272)",
     borderRadius: 20,
     padding: 10,
     marginBottom: 5,
-    maxWidth: "80%"
+    maxWidth: "80%",
+    backdropFilter: "blur(20px)",
+    shadowColor: "rgba(0, 0, 0, 0.4)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)"
   },
-  userMessage: {
-    backgroundColor: "#DCF8C6", // Light green background for user messages
-    alignSelf: "flex-end", // Aligns user messages to the right
+  userMessageContainer: {
+    alignSelf: "flex-end",
     marginRight: 10,
-    color: "black" // Dark text for better contrast
+    color: "grey",
+    backgroundColor: "rgba(17, 83, 0, 0.5)"
   },
-  aiMessage: {
-    backgroundColor: "#ECECEC", // Light grey background for AI messages
-    alignSelf: "flex-start", // Aligns AI messages to the left
+  aiMessageContainer: {
+    alignSelf: "flex-start",
     marginLeft: 10,
-    color: "black" // Dark text for better contrast
+    color: "grey"
   },
   messageContainer: {
     flexDirection: "row",
-    justifyContent: "flex-end"
+    justifyContent: "flex-end",
+    marginVertical: 5,
+    maxWidth: "80%"
   },
-  bottomContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center"
-  },
+
   refreshButton: {
     backgroundColor: "#4CAF50",
     borderRadius: 10,
@@ -448,6 +571,19 @@ const styles = StyleSheet.create({
   },
   activeMicButton: {
     backgroundColor: "#FF4136"
+  },
+  codeScrollView: {
+    flex: 1
+  },
+  codeBlock: {
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 10
+  },
+  codeText: {
+    color: "white",
+    fontFamily: "monospace"
   }
 });
 
