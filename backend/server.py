@@ -20,6 +20,7 @@ import sseclient
 import uvicorn
 import websockets
 from typing import List
+import aiohttp
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -59,12 +60,56 @@ def summarize_code_execution(code_execution_output):
     completion = client.chat.completions.create(
         model="deepseek-coder-v2:16b-lite-instruct-q6_K",
         messages=[
-            {"role": "system", "content": "Summarize the following code execution output. If an action was successful, briefly describe the successful action concisely and offer next steps or suggestions. If an error occurs, do not give all of the error information unless asked for. Simply say there was an error, the code number, and if applicable a simple sentence describing the errror:"},
+            {"role": "system", "content": "Summarize the following code execution output. If an action was successful, briefly describe the successful action concisely and offer next steps or suggestions. If an error occurs, do not give all of the error information unless asked for. Simply say there was an error, the code number, and if applicable a simple sentence describing the error:"},
             {"role": "user", "content": code_execution_output}
         ],
         temperature=0.2,
     )
     return completion.choices[0].message.content
+
+async def stream_interpreter_output(message, websocket):
+    interpreter_url = "http://localhost:10001/interpreter"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(interpreter_url, json={"message": message}) as resp:
+            async for line in resp.content:
+                if line.startswith(b'data: '):
+                    chunk = json.loads(line[6:])
+                    
+                    if chunk['role'] == 'assistant':
+                        if chunk['type'] == 'message':
+                            await manager.send_message(websocket, {
+                                'type': 'chat',
+                                'text': chunk.get('content', '')
+                            })
+                        elif chunk['type'] == 'code':
+                            await manager.send_message(websocket, {
+                                'type': 'code_output',
+                                'text': chunk.get('content', '')
+                            })
+                    elif chunk['role'] == 'computer':
+                        if chunk['type'] == 'console':
+                            await manager.send_message(websocket, {
+                                'type': 'code_output',
+                                'text': chunk.get('content', '')
+                            })
+                        elif chunk['type'] == 'confirmation' and chunk['format'] == 'execution':
+                            await manager.send_message(websocket, {
+                                'type': 'input_required',
+                                'prompt': 'Run this code? (y/n):'
+                            })
+                            user_response = await websocket.receive_text()
+                            if user_response.lower() != 'y':
+                                # If user doesn't confirm, we should break the execution
+                                break
+
+    # After processing all chunks, you might want to send a completion message
+    await manager.send_message(websocket, {
+        'type': 'chat',
+        'text': "Processing complete."
+    })
+
+
+    
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -80,16 +125,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 audio_data = base64.b64decode(data['audio'])
                 user_message = await audio_to_text(audio_data)
 
-            # Send to Interpreter Server using the API endpoint
-            full_output = interpret_message(user_message)
+            # Stream interpreter output and capture full output
+            full_output = await stream_interpreter_output(user_message, websocket)
 
+            # Summarize the full output
             summary = summarize_code_execution(full_output)
-
-            # Send full output to code tab
-            await manager.send_message(websocket, {
-                'type': 'code_output',
-                'text': full_output
-            })
 
             # Send summary to chat tab
             await manager.send_message(websocket, {
@@ -124,38 +164,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-
-def interpret_message(message, server_url="http://localhost:10001/interpreter"):
-    """
-    Send a message to the interpreter server and return the full response.
-
-    Args:
-    message (str): The message to be interpreted.
-    server_url (str): The URL of the interpreter server.
-
-    Returns:
-    str: The full response from the interpreter.
-    """
-    url = f"{server_url}"
-    headers = {'Content-Type': 'application/json'}
-    data = json.dumps({"message": message})
-
-    try:
-        response = requests.post(url, headers=headers, data=data, stream=True)
-        response.raise_for_status()  # Raise an exception for bad status codes
-
-        full_output = ""
-        client = sseclient.SSEClient(response)
-        for event in client.events():
-            if event.data:
-                full_output += event.data
-
-        return full_output
-    except requests.exceptions.RequestException as e:
-        logger.error(f"An error occurred while interpreting the message: {e}")
-        return f"An error occurred: {e}"
-
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8888)
