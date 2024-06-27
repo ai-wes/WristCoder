@@ -7,11 +7,13 @@ import {
   SafeAreaView,
   ActivityIndicator,
   ScrollView,
-  Dimensions
+  Dimensions,
+  TextInput,
+  Alert
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { Audio } from "expo-av";
+import { Audio, InterruptionModeIOS } from "expo-av";
 import * as FileSystem from "expo-file-system";
 import { Canvas, Circle, Group } from "@shopify/react-native-skia";
 
@@ -23,13 +25,22 @@ const AIAssistantGUI = () => {
   const [status, setStatus] = useState("Idle");
   const [recording, setRecording] = useState();
   const [isRecording, setIsRecording] = useState(false);
-  const [response, setResponse] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [audioQueue, setAudioQueue] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
   const [codeOutput, setCodeOutput] = useState([]);
   const [activeTab, setActiveTab] = useState("chat");
+  const [inputRequired, setInputRequired] = useState(false);
+  const [inputPrompt, setInputPrompt] = useState("");
+  const [response, setResponse] = useState("");
+
+  const [userInput, setUserInput] = useState("");
+  const [currentMessage, setCurrentMessage] = useState("");
+  const [currentCode, setCurrentCode] = useState("");
+  const [isCodeConfirmationRequired, setIsCodeConfirmationRequired] =
+    useState(false);
+
   const soundObjectRef = useRef(null);
   const websocketRef = useRef(null);
   const [particles, setParticles] = useState([]);
@@ -53,21 +64,12 @@ const AIAssistantGUI = () => {
   const setupAudio = async () => {
     try {
       await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
+        allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
-        interruptionModeIOS: InterruptionModeIOS.DuckOthers
+        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+        playThroughEarpieceAndroid: false
       });
-
-      // For iOS, we need to set the category to ensure playback through the speaker
-      if (Platform.OS === "ios") {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: true,
-          interruptionModeIOS: InterruptionModeIOS.DuckOthers
-        });
-      }
     } catch (error) {
       console.error("Error setting up audio:", error);
     }
@@ -100,6 +102,7 @@ const AIAssistantGUI = () => {
   };
 
   const handleWebSocketMessage = (data) => {
+    console.log("Received WebSocket message:", data);
     switch (data.type) {
       case "text":
         setChatHistory((prevHistory) => [
@@ -117,20 +120,19 @@ const AIAssistantGUI = () => {
       case "audio":
         setAudioQueue((prevQueue) => [...prevQueue, data.audio]);
         break;
-      case "code_output":
-        setCodeOutput((prevOutput) => [
-          ...prevOutput,
-          { type: "code", content: data.text }
-        ]);
-        break;
-      case "chat":
-        setChatHistory((prevHistory) => [
-          ...prevHistory,
-          { type: "ai", text: data.text }
-        ]);
-        break;
       case "agent_execution_result":
         setStatus("Idle");
+        break;
+      case "chat":
+        setCurrentMessage((prev) => prev + data.text);
+        break;
+      case "code_output":
+        setCurrentCode((prev) => prev + data.text);
+        break;
+      case "input_required":
+        setInputRequired(true);
+        setInputPrompt(data.prompt);
+        setIsCodeConfirmationRequired(true);
         break;
     }
 
@@ -149,6 +151,17 @@ const AIAssistantGUI = () => {
     soundObjectRef.current = soundObject;
 
     try {
+      // Set the correct audio mode before playing
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        interruptionModeIOS: Audio.InterruptionModeIOS.DoNotMix,
+        shouldDuckAndroid: true,
+        interruptionModeAndroid: Audio.InterruptionModeAndroid.DoNotMix,
+        playThroughEarpieceAndroid: false
+      });
+
       const tempFile = `${
         FileSystem.cacheDirectory
       }/temp_audio_${Date.now()}.wav`;
@@ -293,6 +306,38 @@ const AIAssistantGUI = () => {
     </Canvas>
   );
 
+  useEffect(() => {
+    console.log("inputRequired changed:", inputRequired);
+  }, [inputRequired]);
+
+  useEffect(() => {
+    console.log("isProcessing changed:", isProcessing);
+  }, [isProcessing]);
+
+  const sendUserInput = () => {
+    if (
+      websocketRef.current &&
+      websocketRef.current.readyState === WebSocket.OPEN
+    ) {
+      websocketRef.current.send(
+        JSON.stringify({
+          type: "text",
+          text: userInput
+        })
+      );
+      setInputRequired(false);
+      setUserInput("");
+      setIsCodeConfirmationRequired(false);
+
+      if (isCodeConfirmationRequired) {
+        setCurrentCode("");
+      }
+    } else {
+      console.error("WebSocket is not connected");
+      setStatus("Error");
+    }
+  };
+
   const renderContent = () => {
     if (isProcessing) {
       return <ActivityIndicator size="large" color="#00ff00" />;
@@ -302,8 +347,9 @@ const AIAssistantGUI = () => {
         <View style={styles.visualizerContainer}>
           <ParticleVisualization />
         </View>
-        {activeTab === "chat"
-          ? chatHistory.map((item, index) => (
+        {activeTab === "chat" ? (
+          <>
+            {chatHistory.map((item, index) => (
               <View
                 key={index}
                 style={[
@@ -324,12 +370,33 @@ const AIAssistantGUI = () => {
                   </Text>
                 </View>
               </View>
-            ))
-          : codeOutput.map((item, index) => (
+            ))}
+            {currentMessage && (
+              <View
+                style={[styles.messageContainer, styles.aiMessageContainer]}
+              >
+                <View style={styles.glassEffect}>
+                  <Text style={[styles.chatMessage, styles.aiMessage]}>
+                    AI: {currentMessage}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </>
+        ) : (
+          <>
+            {codeOutput.map((item, index) => (
               <View key={index} style={styles.codeBlock}>
                 <Text style={styles.codeText}>{item.content}</Text>
               </View>
             ))}
+            {currentCode && (
+              <View style={styles.codeBlock}>
+                <Text style={styles.codeText}>{currentCode}</Text>
+              </View>
+            )}
+          </>
+        )}
       </ScrollView>
     );
   };
@@ -389,6 +456,25 @@ const AIAssistantGUI = () => {
 
           <View style={styles.outputArea}>{renderContent()}</View>
 
+          {inputRequired && (
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputPrompt}>{inputPrompt}</Text>
+              <TextInput
+                style={styles.input}
+                value={userInput}
+                onChangeText={setUserInput}
+                placeholder="Enter your response..."
+                placeholderTextColor="#999"
+              />
+              <TouchableOpacity
+                style={styles.sendButton}
+                onPress={sendUserInput}
+              >
+                <Text style={styles.sendButtonText}>Send</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={styles.bottomContainer}>
             <TouchableOpacity
               style={styles.refreshButton}
@@ -420,6 +506,16 @@ const styles = StyleSheet.create({
   },
   background: {
     flex: 1
+  },
+  particleContainer: {
+    backgroundColor: "black",
+    position: "absolute", // Position it absolutely within its parent
+    top: 0, // Align to the top of the parent container
+    left: "50%", // Center horizontally relative to the parent container
+    alignItems: "center",
+    justifyContent: "center",
+    maxWidth: "10%", // Adjusted to make the container smaller
+    maxHeight: "10vh" // Adjusted to make the container smaller and use viewport height for responsiveness
   },
   statusBar: {
     flexDirection: "row",
@@ -584,6 +680,20 @@ const styles = StyleSheet.create({
   codeText: {
     color: "white",
     fontFamily: "monospace"
+  },
+  inputContainer: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    padding: 10,
+    marginTop: 10,
+    borderRadius: 5
+  },
+  input: {
+    color: "white",
+    height: 40,
+    borderColor: "gray",
+    borderWidth: 1,
+    marginBottom: 10,
+    paddingHorizontal: 10
   }
 });
 
