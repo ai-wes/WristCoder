@@ -98,6 +98,8 @@ def initialize_interpreter():
     interpreter.llm.max_tokens = 1000
     interpreter.llm.context_window = 7000
     interpreter.llm.load()  # Loads Ollama models
+    interpreter.anonymized_telemetry = True
+    interpreter.loop = True
 
     # Computer settings
     interpreter.computer.import_computer_api = True
@@ -105,7 +107,7 @@ def initialize_interpreter():
     interpreter.computer.vision.load()  # Load vision models
 
     # Misc settings
-    interpreter.auto_run = False
+    interpreter.auto_run = True
     interpreter.offline = True
 
     # Final message
