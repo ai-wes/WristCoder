@@ -91,7 +91,7 @@ def initialize_interpreter():
     interpreter.llm.temperature = 0.1
     interpreter.offline = True
     interpreter.offline = True
-    interpreter.llm.model = "ollama/deepseek-coder-v2"
+    interpreter.llm.model = "ollama/deepseek-coder-v2:16b-lite-instruct-q6_K"
     interpreter.llm.api_base = "http://localhost:11434"
     interpreter.llm.supports_functions = False
     interpreter.llm.execution_instructions = False
