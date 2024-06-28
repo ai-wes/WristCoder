@@ -7,12 +7,17 @@ from fastapi import FastAPI, WebSocket
 import uvicorn
 import logging
 from interpreter import interpreter as base_interpreter
-
+import json
 
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+import os 
+os.environ["OPENAI_API_KEY"] = "sk-proj-6fiWWLbEgiFXgyMeyxfCT3BlbkFJvhdyuoM7IRbRlvGa6teQ"
+os.environ["ANTHROPIC_API_KEY"] = "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"
+
+
 
 def initialize_interpreter():
     interpreter = base_interpreter
@@ -97,19 +102,20 @@ def initialize_interpreter():
     interpreter.llm.temperature = 0.1
     interpreter.offline = True
     interpreter.offline = True
-    interpreter.llm.model = "ollama/deepseek-coder-v2:16b-lite-instruct-q6_K"
-    interpreter.llm.api_base = "http://localhost:11434"
-    interpreter.llm.supports_functions = False
+    #interpreter.llm.model = "claude-3-5-sonnet-20240620"
+    interpreter.llm.model = "gpt-4o"
+    #interpreter.llm.api_base = "http://localhost:11434"
+    interpreter.llm.supports_functions = True
     interpreter.llm.execution_instructions = False
     interpreter.llm.max_tokens = 1000
     interpreter.llm.context_window = 7000
-    interpreter.llm.load()  # Loads Ollama models
+    #interpreter.llm.load()  # Loads Ollama models
     interpreter.loop = True
 
     # Computer settings
     interpreter.computer.import_computer_api = True
     interpreter.computer.system_message = ""  # The default will explain how to use the full Computer API, and append this to the system message. For local models, we want more control, so we set this to "". The system message will ONLY be what's above ^
-    interpreter.computer.vision.load()  # Load vision models
+    #interpreter.computer.vision.load()  # Load vision models
 
     # Misc settings
     interpreter.auto_run = True
@@ -125,26 +131,18 @@ interpreter = initialize_interpreter()
 
 app = FastAPI()
 
-
-def chunked_event_stream(generator, chunk_size=1024):
+def chunked_event_stream(generator):
     try:
-        buffer = ""
         for result in generator:
-            # Ensure result is a string
             if isinstance(result, dict):
-                result = json.dumps(result)
-            elif not isinstance(result, str):
-                result = str(result)
-            
-            buffer += result
-            if len(buffer) >= chunk_size:
-                yield f"data: {buffer}\n\n"
-                buffer = ""
-        if buffer:
-            yield f"data: {buffer}\n\n"
+                yield f"data: {json.dumps(result)}\n\n"
+            elif isinstance(result, str):
+                yield f"data: {result}\n\n"
+            else:
+                yield f"data: {str(result)}\n\n"
     except Exception as e:
         logger.error(f"Error in chunked event stream: {e}")
-        yield f"data: Error occurred in event stream\n\n"
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 @app.post("/interpreter")
 async def chat_endpoint(request: Request):
@@ -154,11 +152,7 @@ async def chat_endpoint(request: Request):
         if not message:
             raise HTTPException(status_code=400, detail="Message is required")
         logger.info(f"Received message for interpretation: {message}")
-
-        response = interpreter.chat(message, stream=False)
-        logger.info("Generated response from interpreter")
-        print(response)
-        return {"response": response}
+        return StreamingResponse(chunked_event_stream(interpreter.chat(message, stream=True, display=True)), media_type="text/event-stream")
     except Exception as e:
         logger.error(f"Error in chat_endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -174,8 +168,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({"error": "Message is required"})
                 continue
             
-            response = interpreter.chat(message)
-            await websocket.send_json({"type": "text", "content": response})
+            for chunk in interpreter.chat(message, stream=True, display=True):
+                await websocket.send_json(chunk)
     except Exception as e:
         logger.error(f"Error in WebSocket communication: {e}")
         await websocket.close()
