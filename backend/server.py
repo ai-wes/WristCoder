@@ -15,6 +15,7 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from stt import audio_to_text
+from generate_interpreter_output_summary import generate_interpreter_output_summary
 import torch
 from TTS.api import TTS
 from openai import OpenAI
