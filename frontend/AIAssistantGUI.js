@@ -622,18 +622,17 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     width: 40,
-    height: "100%",
     backgroundColor: "#2a2a2a",
-    justifyContent: "center",
-    border: "2px solid rgba(255, 255, 255, 0.336)"
+    justifyContent: "space-between", // Changed from "center" to "space-between"
+    borderLeftWidth: 2,
+    borderLeftColor: "rgba(255, 255, 255, 0.336)"
   },
   tab: {
-    height: 120,
-    width: 50,
+    flex: 1, // Changed from fixed height to flex: 1
+    width: 40,
     alignItems: "center",
     justifyContent: "center",
     borderLeftWidth: 3,
-
     borderLeftColor: "transparent"
   },
   activeTab: {
@@ -643,9 +642,10 @@ const styles = StyleSheet.create({
   tabText: {
     color: "#fff",
     fontSize: 14,
-    width: 80,
     fontWeight: "bold",
-    transform: [{ rotate: "270deg" }]
+    transform: [{ rotate: "270deg" }],
+    width: 120, // Increased width to accommodate longer text
+    textAlign: "center" // Ensure text is centered
   },
   chatContainer: {
     flex: 1,
