@@ -109,31 +109,75 @@ const AIAssistantGUI = () => {
           ...prevHistory,
           { type: "ai", text: data.text }
         ]);
-        setCurrentMessage((prev) => prev + data.text);
         break;
       case "code_output":
-        setCodeOutput((prevOutput) => [...prevOutput, { content: data.text }]);
-        setCurrentCode((prev) => prev + data.text);
+        try {
+          const parsedData = JSON.parse(data.text);
+          if (parsedData.role === "computer" && parsedData.type === "console") {
+            if (parsedData.start) {
+              setCurrentCode("");
+            } else if (parsedData.end) {
+              setCodeOutput((prevOutput) => [
+                ...prevOutput,
+                { content: currentCode }
+              ]);
+              setCurrentCode("");
+            } else {
+              setCurrentCode((prev) => prev + (parsedData.content || ""));
+            }
+          } else if (
+            parsedData.role === "assistant" &&
+            parsedData.type === "code"
+          ) {
+            if (parsedData.start) {
+              setCurrentCode("");
+            } else if (parsedData.end) {
+              setCodeOutput((prevOutput) => [
+                ...prevOutput,
+                { content: currentCode, type: "code" }
+              ]);
+              setCurrentCode("");
+            } else {
+              setCurrentCode((prev) => prev + (parsedData.content || ""));
+            }
+          }
+        } catch (error) {
+          console.error("Error parsing code_output:", error);
+          setCodeOutput((prevOutput) => [
+            ...prevOutput,
+            { content: data.text }
+          ]);
+        }
         break;
       case "input_required":
         setInputRequired(true);
         setInputPrompt(data.prompt);
         setIsCodeConfirmationRequired(true);
         break;
+      case "audio":
+        setAudioQueue((prevQueue) => [...prevQueue, data.audio]);
+        break;
     }
     setIsProcessing(false);
   };
+  const sendMessage = () => {
+    if (userInput.trim() === "") return;
 
-  const sendMessage = (message) => {
     if (
       websocketRef.current &&
       websocketRef.current.readyState === WebSocket.OPEN
     ) {
-      websocketRef.current.send(message);
+      websocketRef.current.send(
+        JSON.stringify({
+          type: "text",
+          text: userInput
+        })
+      );
       setChatHistory((prevHistory) => [
         ...prevHistory,
-        { type: "user", text: message }
+        { type: "user", text: userInput }
       ]);
+      setUserInput("");
       setIsProcessing(true);
     } else {
       console.error("WebSocket is not connected");
@@ -153,14 +197,12 @@ const AIAssistantGUI = () => {
     soundObjectRef.current = soundObject;
 
     try {
-      // Set the correct audio mode before playing
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
-        interruptionModeIOS: Audio.InterruptionModeIOS.DoNotMix,
+        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
         shouldDuckAndroid: true,
-        interruptionModeAndroid: Audio.InterruptionModeAndroid.DoNotMix,
         playThroughEarpieceAndroid: false
       });
 
@@ -172,7 +214,6 @@ const AIAssistantGUI = () => {
       });
 
       await soundObject.loadAsync({ uri: tempFile });
-      await soundObject.setVolumeAsync(1.0); // Ensure full volume
       await soundObject.playAsync();
       soundObject.setOnPlaybackStatusUpdate((status) => {
         if (status.didJustFinish) {
@@ -306,7 +347,6 @@ const AIAssistantGUI = () => {
       </Group>
     </Canvas>
   );
-
   return (
     <SafeAreaView style={styles.container}>
       <LinearGradient colors={["#000000", "#1a1a1a"]} style={styles.background}>
@@ -335,35 +375,74 @@ const AIAssistantGUI = () => {
             <ParticleVisualization />
           </View>
 
-          <ScrollView
-            style={styles.chatContainer}
-            contentContainerStyle={styles.chatContent}
-          >
-            {chatHistory.map((message, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.messageContainer,
-                  message.type === "ai"
-                    ? styles.aiMessageContainer
-                    : styles.userMessageContainer
-                ]}
+          <View style={styles.chatConsoleContainer}>
+            <View style={styles.mainContentArea}>
+              {activeTab === "chat" ? (
+                <ScrollView
+                  style={styles.chatContainer}
+                  contentContainerStyle={styles.chatContent}
+                >
+                  {chatHistory.map((message, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.messageContainer,
+                        message.type === "ai"
+                          ? styles.aiMessageContainer
+                          : styles.userMessageContainer
+                      ]}
+                    >
+                      <View style={styles.glassEffect}>
+                        <Text
+                          style={[
+                            styles.chatMessage,
+                            message.type === "ai"
+                              ? styles.aiMessage
+                              : styles.userMessage
+                          ]}
+                        >
+                          {message.type === "ai" ? "AI: " : "User: "}{" "}
+                          {message.text}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : (
+                <ScrollView
+                  style={styles.consoleContainer}
+                  contentContainerStyle={styles.consoleContent}
+                >
+                  {codeOutput.map((output, index) => (
+                    <View key={index} style={styles.codeOutputContainer}>
+                      <Text style={styles.codeOutput}>
+                        {output.type === "code" ? "Code: " : "Output: "}
+                        {output.content}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+
+            <View style={styles.tabContainer}>
+              <TouchableOpacity
+                style={[styles.tab, activeTab === "chat" && styles.activeTab]}
+                onPress={() => setActiveTab("chat")}
               >
-                <View style={styles.glassEffect}>
-                  <Text
-                    style={[
-                      styles.chatMessage,
-                      message.type === "ai"
-                        ? styles.aiMessage
-                        : styles.userMessage
-                    ]}
-                  >
-                    {message.type === "ai" ? "AI: " : "User: "} {message.text}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </ScrollView>
+                <Text style={styles.tabText}>Chat</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.tab,
+                  activeTab === "console" && styles.activeTab
+                ]}
+                onPress={() => setActiveTab("console")}
+              >
+                <Text style={styles.tabText}>Console</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
 
           <View style={styles.inputContainer}>
             <TextInput
@@ -434,11 +513,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     marginLeft: 10
   },
-  content: {
-    flex: 1,
-    padding: 20,
-    justifyContent: "space-between"
-  },
   visualizerContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -447,12 +521,6 @@ const styles = StyleSheet.create({
   canvas: {
     width: VISUALIZATION_SIZE,
     height: VISUALIZATION_SIZE
-  },
-  chatContainer: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    borderRadius: 10,
-    marginBottom: 20
   },
   chatContent: {
     padding: 10
@@ -536,7 +604,61 @@ const styles = StyleSheet.create({
   },
   activeMicButton: {
     backgroundColor: "#FF4136"
+  },
+  content: {
+    flex: 1,
+    padding: 20
+  },
+  chatConsoleContainer: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    borderRadius: 10,
+    marginBottom: 20,
+    overflow: "hidden"
+  },
+  mainContentArea: {
+    flex: 1
+  },
+  tabContainer: {
+    width: 40,
+    height: "100%",
+    backgroundColor: "#2a2a2a",
+    justifyContent: "center",
+    border: "2px solid rgba(255, 255, 255, 0.336)"
+  },
+  tab: {
+    height: 120,
+    width: 50,
+    alignItems: "center",
+    justifyContent: "center",
+    borderLeftWidth: 3,
+
+    borderLeftColor: "transparent"
+  },
+  activeTab: {
+    backgroundColor: "#3a3a3a",
+    borderLeftColor: "#4CAF50"
+  },
+  tabText: {
+    color: "#fff",
+    fontSize: 14,
+    width: 80,
+    fontWeight: "bold",
+    transform: [{ rotate: "270deg" }]
+  },
+  chatContainer: {
+    flex: 1,
+    backgroundColor: "#1a1a1a",
+
+    border: "2px solid rgba(255, 255, 255, 0.827)"
+  },
+  consoleContainer: {
+    flex: 1,
+    color: "#4CAF50",
+
+    backgroundColor: "#1a1a1a",
+    border: "2px solid rgba(255, 255, 255, 0.827)"
   }
 });
-
 export default AIAssistantGUI;
