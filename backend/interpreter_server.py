@@ -3,6 +3,12 @@ from fastapi.responses import StreamingResponse
 import uvicorn
 import logging
 from interpreter import interpreter as base_interpreter
+from fastapi import FastAPI, WebSocket
+import uvicorn
+import logging
+from interpreter import interpreter as base_interpreter
+
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -98,7 +104,6 @@ def initialize_interpreter():
     interpreter.llm.max_tokens = 1000
     interpreter.llm.context_window = 7000
     interpreter.llm.load()  # Loads Ollama models
-    interpreter.anonymized_telemetry = True
     interpreter.loop = True
 
     # Computer settings
@@ -120,50 +125,63 @@ interpreter = initialize_interpreter()
 
 app = FastAPI()
 
-@app.post("/interpreter")
-async def interpret(request: Request):
+
+def chunked_event_stream(generator, chunk_size=1024):
     try:
-        data = await request.json()
-        message = data.get("message")
-        if not message:
-            raise HTTPException(status_code=400, detail="Message is required")
-        
-        response = interpreter.chat(message)
-        return {"response": response}
+        buffer = ""
+        for result in generator:
+            # Ensure result is a string
+            if isinstance(result, dict):
+                result = json.dumps(result)
+            elif not isinstance(result, str):
+                result = str(result)
+            
+            buffer += result
+            if len(buffer) >= chunk_size:
+                yield f"data: {buffer}\n\n"
+                buffer = ""
+        if buffer:
+            yield f"data: {buffer}\n\n"
     except Exception as e:
-        logger.error(f"Error in interpretation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    logger.info("Starting Open Interpreter server...")
-    try:
-        uvicorn.run(app, host="0.0.0.0", port=10001, log_level="info")
-    except Exception as e:
-        logger.error(f"Failed to start server: {e}")
-        
-        
-
-# Initialize interpreter (code above)
-interpreter = initialize_interpreter()
-
-app = FastAPI()
+        logger.error(f"Error in chunked event stream: {e}")
+        yield f"data: Error occurred in event stream\n\n"
 
 @app.post("/interpreter")
-async def interpret(request: Request):
+async def chat_endpoint(request: Request):
     try:
         data = await request.json()
-        message = data.get("message")
+        message = data.get("message", "")
         if not message:
             raise HTTPException(status_code=400, detail="Message is required")
-        
-        response = interpreter.chat(message)
+        logger.info(f"Received message for interpretation: {message}")
+
+        response = interpreter.chat(message, stream=False)
+        logger.info("Generated response from interpreter")
+        print(response)
         return {"response": response}
     except Exception as e:
-        logger.error(f"Error in interpretation: {e}")
+        logger.error(f"Error in chat_endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            message = data.get("content")
+            if not message:
+                await websocket.send_json({"error": "Message is required"})
+                continue
+            
+            response = interpreter.chat(message)
+            await websocket.send_json({"type": "text", "content": response})
+    except Exception as e:
+        logger.error(f"Error in WebSocket communication: {e}")
+        await websocket.close()
+
 if __name__ == "__main__":
-    logger.info("Starting Open Interpreter server...")
+    logger.info("Starting Open Interpreter server with WebSocket support...")
     try:
         uvicorn.run(app, host="0.0.0.0", port=10001, log_level="info")
     except Exception as e:
