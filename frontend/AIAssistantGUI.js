@@ -6,8 +6,8 @@ import {
   StyleSheet,
   SafeAreaView,
   ActivityIndicator,
-  ScrollView,
   Dimensions,
+  ScrollView,
   TextInput,
   Alert
 } from "react-native";
@@ -17,7 +17,7 @@ import { Audio, InterruptionModeIOS } from "expo-av";
 import * as FileSystem from "expo-file-system";
 import { Canvas, Circle, Group } from "@shopify/react-native-skia";
 
-const WEBSOCKET_URL = "wss://wristcode.emotion-ai.io/ws";
+const WEBSOCKET_URL = "ws://192.168.1.224:8888/ws";
 const { width, height } = Dimensions.get("window");
 const VISUALIZATION_SIZE = Math.min(width, height) * 0.6;
 
@@ -104,29 +104,15 @@ const AIAssistantGUI = () => {
   const handleWebSocketMessage = (data) => {
     console.log("Received WebSocket message:", data);
     switch (data.type) {
-      case "text":
-        setChatHistory((prevHistory) => [
-          ...prevHistory,
-          { type: "user", text: data.text }
-        ]);
-        break;
-      case "response":
-        setResponse(data.text);
+      case "chat":
         setChatHistory((prevHistory) => [
           ...prevHistory,
           { type: "ai", text: data.text }
         ]);
-        break;
-      case "audio":
-        setAudioQueue((prevQueue) => [...prevQueue, data.audio]);
-        break;
-      case "agent_execution_result":
-        setStatus("Idle");
-        break;
-      case "chat":
         setCurrentMessage((prev) => prev + data.text);
         break;
       case "code_output":
+        setCodeOutput((prevOutput) => [...prevOutput, { content: data.text }]);
         setCurrentCode((prev) => prev + data.text);
         break;
       case "input_required":
@@ -135,8 +121,24 @@ const AIAssistantGUI = () => {
         setIsCodeConfirmationRequired(true);
         break;
     }
-
     setIsProcessing(false);
+  };
+
+  const sendMessage = (message) => {
+    if (
+      websocketRef.current &&
+      websocketRef.current.readyState === WebSocket.OPEN
+    ) {
+      websocketRef.current.send(message);
+      setChatHistory((prevHistory) => [
+        ...prevHistory,
+        { type: "user", text: message }
+      ]);
+      setIsProcessing(true);
+    } else {
+      console.error("WebSocket is not connected");
+      setStatus("Error");
+    }
   };
 
   const playNextAudio = async () => {
@@ -257,55 +259,6 @@ const AIAssistantGUI = () => {
     }
   };
 
-  const updateParticles = (audioData) => {
-    const centerX = VISUALIZATION_SIZE / 2;
-    const centerY = VISUALIZATION_SIZE / 2;
-    const audioValue = Math.max(0, Math.min(1, (audioData[0] + 160) / 160));
-
-    const newParticles = Array(100)
-      .fill(0)
-      .map((_, index) => {
-        const angle = (index / 100) * Math.PI * 2;
-        const distance = audioValue * VISUALIZATION_SIZE * 0.4;
-        return {
-          x: centerX + Math.cos(angle) * distance,
-          y: centerY + Math.sin(angle) * distance,
-          size: 2 + audioValue * 3,
-          color: `rgba(0, ${Math.floor(255 * audioValue)}, 0, 0.8)`
-        };
-      });
-
-    setParticles(newParticles);
-  };
-
-  const ParticleVisualization = () => (
-    <Canvas style={styles.canvas}>
-      <Group>
-        <Circle
-          cx={VISUALIZATION_SIZE / 2}
-          cy={VISUALIZATION_SIZE / 2}
-          r={VISUALIZATION_SIZE / 2 - 10}
-          color="rgba(0, 255, 0, 0.1)"
-        />
-        <Circle
-          cx={VISUALIZATION_SIZE / 2}
-          cy={VISUALIZATION_SIZE / 2}
-          r={VISUALIZATION_SIZE / 3}
-          color="rgba(0, 255, 0, 0.2)"
-        />
-        {particles.map((particle, index) => (
-          <Circle
-            key={index}
-            cx={particle.x}
-            cy={particle.y}
-            r={particle.size}
-            color={particle.color}
-          />
-        ))}
-      </Group>
-    </Canvas>
-  );
-
   useEffect(() => {
     console.log("inputRequired changed:", inputRequired);
   }, [inputRequired]);
@@ -338,68 +291,21 @@ const AIAssistantGUI = () => {
     }
   };
 
-  const renderContent = () => {
-    if (isProcessing) {
-      return <ActivityIndicator size="large" color="#00ff00" />;
-    }
-    return (
-      <ScrollView style={styles.contentScrollView}>
-        <View style={styles.visualizerContainer}>
-          <ParticleVisualization />
-        </View>
-        {activeTab === "chat" ? (
-          <>
-            {chatHistory.map((item, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.messageContainer,
-                  item.type === "ai"
-                    ? styles.aiMessageContainer
-                    : styles.userMessageContainer
-                ]}
-              >
-                <View style={styles.glassEffect}>
-                  <Text
-                    style={[
-                      styles.chatMessage,
-                      item.type === "ai" ? styles.aiMessage : styles.userMessage
-                    ]}
-                  >
-                    {item.type === "ai" ? "AI: " : "User: "} {item.text}
-                  </Text>
-                </View>
-              </View>
-            ))}
-            {currentMessage && (
-              <View
-                style={[styles.messageContainer, styles.aiMessageContainer]}
-              >
-                <View style={styles.glassEffect}>
-                  <Text style={[styles.chatMessage, styles.aiMessage]}>
-                    AI: {currentMessage}
-                  </Text>
-                </View>
-              </View>
-            )}
-          </>
-        ) : (
-          <>
-            {codeOutput.map((item, index) => (
-              <View key={index} style={styles.codeBlock}>
-                <Text style={styles.codeText}>{item.content}</Text>
-              </View>
-            ))}
-            {currentCode && (
-              <View style={styles.codeBlock}>
-                <Text style={styles.codeText}>{currentCode}</Text>
-              </View>
-            )}
-          </>
-        )}
-      </ScrollView>
-    );
-  };
+  const ParticleVisualization = () => (
+    <Canvas style={styles.canvas}>
+      <Group>
+        {particles.map((particle, index) => (
+          <Circle
+            key={index}
+            cx={particle.x}
+            cy={particle.y}
+            r={particle.size}
+            color={particle.color}
+          />
+        ))}
+      </Group>
+    </Canvas>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -410,22 +316,14 @@ const AIAssistantGUI = () => {
             style={[
               styles.statusIndicator,
               {
-                backgroundColor:
-                  status === "Idle" || status === "Connected"
-                    ? "#4CAF50"
-                    : "#FF4136"
+                backgroundColor: status === "Connected" ? "#4CAF50" : "#FF4136"
               }
             ]}
           />
           <Text
             style={[
               styles.statusLabel,
-              {
-                color:
-                  status === "Idle" || status === "Connected"
-                    ? "#4CAF50"
-                    : "#FF4136"
-              }
+              { color: status === "Connected" ? "#4CAF50" : "#FF4136" }
             ]}
           >
             {status}
@@ -433,47 +331,53 @@ const AIAssistantGUI = () => {
         </View>
 
         <View style={styles.content}>
-          <View style={styles.buttonContainer}>
-            <TouchableOpacity
-              style={[
-                styles.button,
-                activeTab === "chat" && styles.activeButton
-              ]}
-              onPress={() => setActiveTab("chat")}
-            >
-              <Text style={styles.buttonText}>Chat</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.button,
-                activeTab === "code" && styles.activeButton
-              ]}
-              onPress={() => setActiveTab("code")}
-            >
-              <Text style={styles.buttonText}>Code</Text>
-            </TouchableOpacity>
+          <View style={styles.visualizerContainer}>
+            <ParticleVisualization />
           </View>
 
-          <View style={styles.outputArea}>{renderContent()}</View>
-
-          {inputRequired && (
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputPrompt}>{inputPrompt}</Text>
-              <TextInput
-                style={styles.input}
-                value={userInput}
-                onChangeText={setUserInput}
-                placeholder="Enter your response..."
-                placeholderTextColor="#999"
-              />
-              <TouchableOpacity
-                style={styles.sendButton}
-                onPress={sendUserInput}
+          <ScrollView
+            style={styles.chatContainer}
+            contentContainerStyle={styles.chatContent}
+          >
+            {chatHistory.map((message, index) => (
+              <View
+                key={index}
+                style={[
+                  styles.messageContainer,
+                  message.type === "ai"
+                    ? styles.aiMessageContainer
+                    : styles.userMessageContainer
+                ]}
               >
-                <Text style={styles.sendButtonText}>Send</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+                <View style={styles.glassEffect}>
+                  <Text
+                    style={[
+                      styles.chatMessage,
+                      message.type === "ai"
+                        ? styles.aiMessage
+                        : styles.userMessage
+                    ]}
+                  >
+                    {message.type === "ai" ? "AI: " : "User: "} {message.text}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              value={userInput}
+              onChangeText={setUserInput}
+              placeholder="Type your message..."
+              placeholderTextColor="#999"
+              onSubmitEditing={sendMessage}
+            />
+            <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
+              <Ionicons name="send" size={24} color="white" />
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.bottomContainer}>
             <TouchableOpacity
@@ -481,11 +385,12 @@ const AIAssistantGUI = () => {
               onPress={refreshContent}
             >
               <Ionicons name="refresh" size={24} color="white" />
-              <Text style={styles.refreshText}>Refresh</Text>
+              <Text style={styles.refreshText}>Reset</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.micButton, isRecording && styles.activeMicButton]}
               onPress={isRecording ? stopRecording : startRecording}
+              disabled={isProcessing}
             >
               <Ionicons
                 name={isRecording ? "stop" : "mic"}
@@ -502,20 +407,11 @@ const AIAssistantGUI = () => {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1
+    flex: 1,
+    width: "100%"
   },
   background: {
     flex: 1
-  },
-  particleContainer: {
-    backgroundColor: "black",
-    position: "absolute", // Position it absolutely within its parent
-    top: 0, // Align to the top of the parent container
-    left: "50%", // Center horizontally relative to the parent container
-    alignItems: "center",
-    justifyContent: "center",
-    maxWidth: "10%", // Adjusted to make the container smaller
-    maxHeight: "10vh" // Adjusted to make the container smaller and use viewport height for responsiveness
   },
   statusBar: {
     flexDirection: "row",
@@ -525,7 +421,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     color: "white",
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: "bold"
   },
   statusIndicator: {
@@ -538,6 +434,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     marginLeft: 10
   },
+  content: {
+    flex: 1,
+    padding: 20,
+    justifyContent: "space-between"
+  },
   visualizerContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -547,77 +448,32 @@ const styles = StyleSheet.create({
     width: VISUALIZATION_SIZE,
     height: VISUALIZATION_SIZE
   },
-  bottomContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center"
-  },
-
-  content: {
+  chatContainer: {
     flex: 1,
-    padding: 20,
-    justifyContent: "space-between"
-  },
-  modelSelector: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    borderRadius: 10,
-    padding: 15,
-    marginBottom: 20
-  },
-  modelText: {
-    color: "white",
-    fontSize: 16
-  },
-  buttonContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 20
-  },
-  button: {
-    backgroundColor: "#2196F3",
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 30,
-    flex: 0.48
-  },
-  activeButton: {
-    backgroundColor: "#1565C0"
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    textAlign: "center"
-  },
-  outputArea: {
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     borderRadius: 10,
-    flex: 1,
     marginBottom: 20
   },
-  contentScrollView: {
-    flex: 1
-  },
-  contentText: {
-    color: "white",
-    fontSize: 16,
+  chatContent: {
     padding: 10
   },
-  chatMessage: {
-    fontSize: 18
+  messageContainer: {
+    flexDirection: "row",
+    marginVertical: 5,
+    maxWidth: "80%"
   },
-  userMessage: {
-    color: "white"
+  userMessageContainer: {
+    justifyContent: "flex-end",
+    alignSelf: "flex-end"
   },
-  aiMessage: {
-    color: "white"
+  aiMessageContainer: {
+    justifyContent: "flex-start",
+    alignSelf: "flex-start"
   },
   glassEffect: {
     backgroundColor: "rgba(19, 19, 19, 0.272)",
     borderRadius: 20,
     padding: 10,
-    marginBottom: 5,
-    maxWidth: "80%",
-    backdropFilter: "blur(20px)",
     shadowColor: "rgba(0, 0, 0, 0.4)",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 1,
@@ -626,27 +482,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.2)"
   },
-  userMessageContainer: {
-    alignSelf: "flex-end",
-    marginRight: 10,
-    color: "grey",
-    backgroundColor: "rgba(17, 83, 0, 0.5)"
+  chatMessage: {
+    fontSize: 16
   },
-  aiMessageContainer: {
-    alignSelf: "flex-start",
-    marginLeft: 10,
-    color: "grey"
+  userMessage: {
+    color: "white"
   },
-  messageContainer: {
+  aiMessage: {
+    color: "white"
+  },
+  inputContainer: {
     flexDirection: "row",
-    justifyContent: "flex-end",
-    marginVertical: 5,
-    maxWidth: "80%"
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 25,
+    paddingHorizontal: 15,
+    marginBottom: 10
   },
-
+  input: {
+    flex: 1,
+    color: "white",
+    height: 50,
+    fontSize: 16
+  },
+  sendButton: {
+    padding: 10
+  },
+  bottomContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
   refreshButton: {
     backgroundColor: "#4CAF50",
-    borderRadius: 10,
+    borderRadius: 25,
     paddingVertical: 10,
     paddingHorizontal: 20,
     flexDirection: "row",
@@ -667,33 +536,6 @@ const styles = StyleSheet.create({
   },
   activeMicButton: {
     backgroundColor: "#FF4136"
-  },
-  codeScrollView: {
-    flex: 1
-  },
-  codeBlock: {
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10
-  },
-  codeText: {
-    color: "white",
-    fontFamily: "monospace"
-  },
-  inputContainer: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
-    padding: 10,
-    marginTop: 10,
-    borderRadius: 5
-  },
-  input: {
-    color: "white",
-    height: 40,
-    borderColor: "gray",
-    borderWidth: 1,
-    marginBottom: 10,
-    paddingHorizontal: 10
   }
 });
 
