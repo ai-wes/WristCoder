@@ -15,7 +15,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { Audio, InterruptionModeIOS } from "expo-av";
 import * as FileSystem from "expo-file-system";
-import ParticleAudioVisualizer from "./ParticleAudioVisualizer"; // Adjust the import path if necessary
+import LoopingGif from "./LoopingGif";
 
 const WEBSOCKET_URL = "ws://192.168.1.224:8888/ws";
 const { width, height } = Dimensions.get("window");
@@ -35,6 +35,8 @@ const AIAssistantGUI = () => {
   const [inputPrompt, setInputPrompt] = useState("");
   const [response, setResponse] = useState("");
   const [audioData, setAudioData] = useState(new Uint8Array(128));
+  const [audioLevel, setAudioLevel] = useState(1);
+  const [audioFrequency, setAudioFrequency] = useState(500);
 
   const [userInput, setUserInput] = useState("");
   const [currentMessage, setCurrentMessage] = useState("");
@@ -344,148 +346,153 @@ const AIAssistantGUI = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <LinearGradient colors={["#000000", "#2f2f2f"]} style={styles.background}>
-        <Text style={styles.status}>
-          Status: {isConnected ? "Connected" : "Disconnected"}
+    <LinearGradient colors={["#000000", "#2f2f2f"]} style={styles.background}>
+      <Text style={styles.status}>
+        Status: {isConnected ? "Connected" : "Disconnected"}
+      </Text>
+      <View style={styles.statusBar}>
+        <Text style={styles.statusText}>Status: </Text>
+        <View
+          style={[
+            styles.statusIndicator,
+            {
+              backgroundColor: status === "Connected" ? "#1fe026" : "#FF4136"
+            }
+          ]}
+        />
+        <Text
+          style={[
+            styles.statusLabel,
+            { color: status === "Connected" ? "#1fe026" : "#FF4136" }
+          ]}
+        >
+          {status}
         </Text>
-        <View style={styles.statusBar}>
-          <Text style={styles.statusText}>Status: </Text>
-          <View
-            style={[
-              styles.statusIndicator,
-              {
-                backgroundColor: status === "Connected" ? "#1fe026" : "#FF4136"
-              }
-            ]}
-          />
-          <Text
-            style={[
-              styles.statusLabel,
-              { color: status === "Connected" ? "#1fe026" : "#FF4136" }
-            ]}
-          >
-            {status}
-          </Text>
-        </View>
-        {/* Visualizer at the top */}
-        <View style={styles.visualizerContainer}>
-          <ParticleAudioVisualizer />
-        </View>
-        <View style={styles.content}>
-          <View style={styles.chatConsoleContainer}>
-            <View style={styles.mainContentArea}>
-              {activeTab === "chat" ? (
-                <ScrollView
-                  style={styles.chatContainer}
-                  contentContainerStyle={styles.chatContent}
-                >
-                  {chatHistory.map((message, index) => (
-                    <View
-                      key={index}
-                      style={[
-                        styles.messageContainer,
-                        message.type === "ai"
-                          ? styles.aiMessageContainer
-                          : styles.userMessageContainer
-                      ]}
-                    >
-                      <View style={styles.glassEffect}>
-                        <Text
-                          style={[
-                            styles.chatMessage,
-                            message.type === "ai"
-                              ? styles.aiMessage
-                              : styles.userMessage
-                          ]}
-                        >
-                          {message.type === "ai" ? "AI: " : "User: "}{" "}
-                          {message.text}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
-                </ScrollView>
-              ) : (
-                <ScrollView
-                  style={styles.consoleContainer}
-                  contentContainerStyle={styles.consoleContent}
-                >
-                  {codeOutput.map((output, index) => (
-                    <View key={index} style={styles.codeOutputContainer}>
-                      <Text style={styles.codeOutputLabel}>
-                        {output.type === "code" ? "Code:" : "Output:"}
+      </View>
+      {/* Visualizer at the top */}
+      <View style={styles.visualizerContainer}>
+        <LoopingGif
+          source={require("./assets/looping_gif.gif")}
+          style={{ width: 225, height: 225, marginTop: -15 }} // Adjust size as needed
+        />
+      </View>
+      <View style={styles.content}>
+        <View style={styles.chatConsoleContainer}>
+          <View style={styles.mainContentArea}>
+            {activeTab === "chat" ? (
+              <ScrollView
+                style={styles.chatContainer}
+                contentContainerStyle={styles.chatContent}
+              >
+                {chatHistory.map((message, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.messageContainer,
+                      message.type === "ai"
+                        ? styles.aiMessageContainer
+                        : styles.userMessageContainer
+                    ]}
+                  >
+                    <View style={styles.glassEffect}>
+                      <Text
+                        style={[
+                          styles.chatMessage,
+                          message.type === "ai"
+                            ? styles.aiMessage
+                            : styles.userMessage
+                        ]}
+                      >
+                        {message.type === "ai" ? "AI: " : "User: "}{" "}
+                        {message.text}
                       </Text>
-                      <Text style={styles.codeOutput}>{output.content}</Text>
                     </View>
-                  ))}
-                </ScrollView>
-              )}
-            </View>
-            <View style={styles.tabContainer}>
-              <TouchableOpacity
-                style={[styles.tab, activeTab === "chat" && styles.activeTab]}
-                onPress={() => setActiveTab("chat")}
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <ScrollView
+                style={styles.consoleContainer}
+                contentContainerStyle={styles.consoleContent}
               >
-                <Text style={styles.tabText}>Chat</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.tab,
-                  activeTab === "console" && styles.activeTab
-                ]}
-                onPress={() => setActiveTab("console")}
-              >
-                <Text style={styles.tabText}>Console</Text>
-              </TouchableOpacity>
-            </View>
+                {codeOutput.map((output, index) => (
+                  <View key={index} style={styles.codeOutputContainer}>
+                    <Text style={styles.codeOutputLabel}>
+                      {output.type === "code" ? "Code:" : "Output:"}
+                    </Text>
+                    <Text style={styles.codeOutput}>{output.content}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
           </View>
-
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              value={userInput}
-              onChangeText={setUserInput}
-              placeholder="Type your message..."
-              placeholderTextColor="#999"
-              onSubmitEditing={sendMessage}
-            />
-            <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
-              <Ionicons name="send" size={24} color="white" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.bottomContainer}>
+          <View style={styles.tabContainer}>
             <TouchableOpacity
-              style={styles.refreshButton}
-              onPress={refreshContent}
+              style={[styles.tab, activeTab === "chat" && styles.activeTab]}
+              onPress={() => setActiveTab("chat")}
             >
-              <Ionicons name="refresh" size={24} color="white" />
-              <Text style={styles.refreshText}>Reset</Text>
+              <Text style={styles.tabText}>Chat</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.micButton, isRecording && styles.activeMicButton]}
-              onPress={isRecording ? stopRecording : startRecording}
-              disabled={isProcessing}
+              style={[styles.tab, activeTab === "console" && styles.activeTab]}
+              onPress={() => setActiveTab("console")}
             >
-              <Ionicons
-                name={isRecording ? "stop" : "mic"}
-                size={32}
-                color="white"
-              />
+              <Text style={styles.tabText}>Console</Text>
             </TouchableOpacity>
           </View>
         </View>
-      </LinearGradient>
-    </SafeAreaView>
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            value={userInput}
+            onChangeText={setUserInput}
+            placeholder="Type your message..."
+            placeholderTextColor="#999"
+            onSubmitEditing={sendMessage}
+          />
+          <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
+            <Ionicons name="send" size={24} color="white" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.bottomContainer}>
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={refreshContent}
+          >
+            <Ionicons name="refresh" size={24} color="white" />
+            <Text style={styles.refreshText}>Reset</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.micButton, isRecording && styles.activeMicButton]}
+            onPress={isRecording ? stopRecording : startRecording}
+            disabled={isProcessing}
+          >
+            <Ionicons
+              name={isRecording ? "stop" : "mic"}
+              size={32}
+              color="white"
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    width: "100%"
+    width: "100%",
+
+    marginTop: -20
   },
+  particleSphere: {
+    width: "100%",
+    color: "#1fe026"
+  },
+
   background: {
     flex: 1
   },
@@ -493,7 +500,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingTop: 15
+    paddingTop: 19
   },
   statusText: {
     color: "white",
@@ -511,24 +518,21 @@ const styles = StyleSheet.create({
     marginLeft: 10
   },
   visualizerContainer: {
-    width: VISUALIZATION_SIZE,
-    height: VISUALIZATION_SIZE,
+    width: "100%",
+    height: "30%",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 20
+    marginTop: 10,
+    backgroundColor: "black" // Add a background color for visibility
   },
-  particleAnimation: {
-    width: VISUALIZATION_SIZE,
-    height: VISUALIZATION_SIZE,
-    zIndex: 1
-  },
+
   chatContent: {
     padding: 10
   },
   messageContainer: {
     flexDirection: "row",
     marginVertical: 5,
-    maxWidth: "88%"
+    maxWidth: "90%"
   },
   userMessageContainer: {
     backgroundColor: "#343434",
@@ -555,7 +559,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.2)"
   },
   chatMessage: {
-    fontSize: 16
+    fontSize: 14
   },
   userMessage: {
     color: "white"
@@ -578,7 +582,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     color: "white",
-    height: 50,
+    height: 30,
     fontSize: 16
   },
   sendButton: {
@@ -622,6 +626,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     borderRadius: 10,
+    height: "100%",
     marginBottom: 10,
     overflow: "hidden"
   },
