@@ -1,28 +1,26 @@
 import React from "react";
+import { registerRootComponent } from "expo";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
-import AIAssistantGUI from "./AIAssistantGUI"; // Assuming you have this component
+import AIAssistantGUI from "./AIAssistantGUI"; // Adjust the import path if necessary
 
 const Stack = createStackNavigator();
 
-export default function App() {
+function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator>
+      <Stack.Navigator initialRouteName="AIAssistant">
         <Stack.Screen
-          name="AI Assistant"
+          name="AIAssistant"
           component={AIAssistantGUI}
           options={{
-            headerStyle: {
-              backgroundColor: "#000000"
-            },
-            headerTintColor: "#fff",
-            headerTitleStyle: {
-              fontWeight: "bold"
-            }
+            headerShown: false // This hides the header for the AIAssistantGUI screen
           }}
         />
+        {/* You can add more screens here as needed */}
       </Stack.Navigator>
     </NavigationContainer>
   );
 }
+
+export default registerRootComponent(App);
