@@ -15,7 +15,6 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from stt import audio_to_text
-from generate_interpreter_output_summary import generate_interpreter_output_summary
 import torch
 from TTS.api import TTS
 from openai import OpenAI
@@ -24,6 +23,8 @@ import uvicorn
 import websockets
 from typing import List
 import aiohttp
+from langchain_community.llms import Ollama
+from generate_interpreter_output_summary import generate_interpreter_output_summary
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -92,92 +93,67 @@ async def handle_audio_message(audio_data, websocket):
 
 async def stream_interpreter_output(message, websocket):
     interpreter_url = "http://localhost:10001/interpreter"
-    current_message = ""
-    is_message_started = False
-    is_code_started = False
-    code_content = ""
-
+    raw_output = ""
+    # Send the message over the websocket
+    await manager.send_message(websocket, {
+        'type': 'userMessage',
+        'text': message
+    })
     async with aiohttp.ClientSession() as session:
         async with session.post(interpreter_url, json={"message": message}) as resp:
             async for line in resp.content:
                 if line.startswith(b'data: '):
-                    try:
-                        chunk = json.loads(line[6:])
-                        
-                        if chunk['role'] == 'assistant':
-                            if chunk['type'] == 'message':
-                                if chunk.get('start', False):
-                                    is_message_started = True
-                                    current_message = ""
-                                elif chunk.get('end', False):
-                                    is_message_started = False
-                                    await process_and_send_chunk(current_message.strip(), websocket)
-                                    logger.info(f"Processed and sent full message: {current_message.strip()}")
-                                elif is_message_started:
-                                    current_message += chunk.get('content', '')
-                            elif chunk['type'] == 'code':
-                                if chunk.get('start', False):
-                                    is_code_started = True
-                                    code_content = ""
-                                elif chunk.get('end', False):
-                                    is_code_started = False
-                                    await manager.send_message(websocket, {
-                                        'type': 'code_output',
-                                        'text': code_content
-                                    })
-                                    logger.info(f"Sent code content: {code_content}")
-                                elif is_code_started:
-                                    code_content += chunk.get('content', '')
-                        
-                        elif chunk['role'] == 'computer' and chunk['type'] in ['console', 'confirmation']:
-                            await manager.send_message(websocket, {
-                                'type': 'code_output',
-                                'text': json.dumps(chunk)
-                            })
-                            logger.info(f"Sent computer output: {json.dumps(chunk)}")
-                        
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON decode error: {e} - Line content: {line}")
-                    except Exception as e:
-                        logger.error(f"Unexpected error: {e}")
-            
-            # Send any remaining message after the stream ends
-            if current_message:
-                await process_and_send_chunk(current_message.strip(), websocket)
-                logger.info(f"Processed and sent final message: {current_message.strip()}")
-
+                    chunk = json.loads(line[6:])
+                    
+                    # Accumulate raw output
+                    raw_output += json.dumps(chunk) + "\n"
+                    
+                    # Send raw output to frontend if the WebSocket is still open
+                    await manager.send_message(websocket, {
+                        'type': 'code_output',
+                        'text': json.dumps(chunk)
+                    })
+                    
+    # After processing all chunks, summarize the output
+    generated_summary = generate_interpreter_output_summary(raw_output)
+        # Send the summary as a parsed message
+    await manager.send_message(websocket, {
+        'type': 'parsed_message',
+        'text': generated_summary
+    })
+    await process_and_send_chunk(generated_summary, websocket)
 
 # Text-to-Speech (TTS) Processing
-async def process_and_send_chunk(message, websocket):
-    # Send text chunk to frontend
-    await manager.send_message(websocket, {
-        'type': 'chat',
-        'text': message
-    })
-    logger.info(f"Sent chat message: {message}")
+async def process_and_send_chunk(generated_summary, websocket):
+
     # Process TTS
-    tts_chunks = re.findall(r'[^.!?]+[.!?]', message)
+    tts_chunks = re.findall(r'[^.!?]+[.!?]', generated_summary)
+    processed_audio = set()  # To keep track of processed audio chunks
     for chunk in tts_chunks:
         chunk = chunk.strip()
-        logger.info(f"Processing TTS for chunk: {chunk}")
-        if chunk:
+        if chunk and chunk not in processed_audio:
+            logger.info(f"Processing TTS for chunk: {chunk}")
             base64_audio = await text_to_speech(chunk)
-            # Send audio chunk to frontend
+            # Send audio chunk to frontend if the WebSocket is still open
             await manager.send_message(websocket, {
                 'type': 'audio',
                 'audio': base64_audio,
                 'text': chunk
             })
-            logger.info("Sent audio message to WebSocket")
+        processed_audio.add(chunk)
+        logger.info("Sent audio message to WebSocket")
 
+            
 async def text_to_speech(text):
     logger.info("Converting text to speech")
+    modified_text = text.rstrip('A')
     bytes_buffer = io.BytesIO()
+
     tts.tts_to_file(
-        text=text,
-        speaker_wav="C:\\Users\\wesla\\claude_assistant\\backend\\voices\\jake_gyllenhaul.wav",
+        text=modified_text,
+        speaker_wav="C:\\Users\\wesla\\claude_assistant\\backend\\voices\\colin_farrell.wav",
         file_path=bytes_buffer,
-        speed=1.6,
+        speed=1.7,
         temperature=0.9,
         top_k=50,
         top_p=0.5,
