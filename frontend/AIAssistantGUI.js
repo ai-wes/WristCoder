@@ -16,10 +16,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { Audio, InterruptionModeIOS } from "expo-av";
 import * as FileSystem from "expo-file-system";
 import { Canvas, Circle, Group } from "@shopify/react-native-skia";
+import ParticleSphere from "./ParticleSphere";
+import showdown from "showdown";
 
 const WEBSOCKET_URL = "ws://192.168.1.224:8888/ws";
 const { width, height } = Dimensions.get("window");
 const VISUALIZATION_SIZE = Math.min(width, height) * 0.6;
+
+// Create a Showdown converter
+const converter = new showdown.Converter();
 
 const AIAssistantGUI = () => {
   const [status, setStatus] = useState("Idle");
@@ -104,7 +109,7 @@ const AIAssistantGUI = () => {
   const handleWebSocketMessage = (data) => {
     console.log("Received WebSocket message:", data);
     switch (data.type) {
-      case "chat":
+      case "parsed_message":
         setChatHistory((prevHistory) => [
           ...prevHistory,
           { type: "ai", text: data.text }
@@ -125,29 +130,31 @@ const AIAssistantGUI = () => {
             } else {
               setCurrentCode((prev) => prev + (parsedData.content || ""));
             }
-          } else if (
-            parsedData.role === "assistant" &&
-            parsedData.type === "code"
-          ) {
-            if (parsedData.start) {
-              setCurrentCode("");
-            } else if (parsedData.end) {
-              setCodeOutput((prevOutput) => [
-                ...prevOutput,
-                { content: currentCode, type: "code" }
-              ]);
-              setCurrentCode("");
-            } else {
-              setCurrentCode((prev) => prev + (parsedData.content || ""));
-            }
+          } else {
+            setCodeOutput((prevOutput) => [
+              ...prevOutput,
+              { content: data.text, type: "code_output" }
+            ]);
           }
         } catch (error) {
           console.error("Error parsing code_output:", error);
           setCodeOutput((prevOutput) => [
             ...prevOutput,
-            { content: data.text }
+            { content: data.text, type: "code_output" }
           ]);
         }
+        break;
+      case "userMessage":
+        setChatHistory((prevHistory) => [
+          ...prevHistory,
+          { type: "userMessage", text: data.text }
+        ]);
+        break;
+      case "parsed_message":
+        setChatHistory((prevHistory) => [
+          ...prevHistory,
+          { type: "ai", text: data.text }
+        ]);
         break;
       case "input_required":
         setInputRequired(true);
@@ -160,6 +167,7 @@ const AIAssistantGUI = () => {
     }
     setIsProcessing(false);
   };
+
   const sendMessage = () => {
     if (userInput.trim() === "") return;
 
@@ -347,23 +355,24 @@ const AIAssistantGUI = () => {
       </Group>
     </Canvas>
   );
+
   return (
     <SafeAreaView style={styles.container}>
-      <LinearGradient colors={["#000000", "#1a1a1a"]} style={styles.background}>
+      <LinearGradient colors={["#000000", "#2f2f2f"]} style={styles.background}>
         <View style={styles.statusBar}>
           <Text style={styles.statusText}>Status: </Text>
           <View
             style={[
               styles.statusIndicator,
               {
-                backgroundColor: status === "Connected" ? "#4CAF50" : "#FF4136"
+                backgroundColor: status === "Connected" ? "#1fe026" : "#FF4136"
               }
             ]}
           />
           <Text
             style={[
               styles.statusLabel,
-              { color: status === "Connected" ? "#4CAF50" : "#FF4136" }
+              { color: status === "Connected" ? "#1fe026" : "#FF4136" }
             ]}
           >
             {status}
@@ -415,16 +424,15 @@ const AIAssistantGUI = () => {
                 >
                   {codeOutput.map((output, index) => (
                     <View key={index} style={styles.codeOutputContainer}>
-                      <Text style={styles.codeOutput}>
-                        {output.type === "code" ? "Code: " : "Output: "}
-                        {output.content}
+                      <Text style={styles.codeOutputLabel}>
+                        {output.type === "code" ? "Code:" : "Output:"}
                       </Text>
+                      <Text style={styles.codeOutput}>{output.content}</Text>
                     </View>
                   ))}
                 </ScrollView>
               )}
             </View>
-
             <View style={styles.tabContainer}>
               <TouchableOpacity
                 style={[styles.tab, activeTab === "chat" && styles.activeTab]}
@@ -496,7 +504,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingTop: 10
+    paddingTop: 15
   },
   statusText: {
     color: "white",
@@ -528,15 +536,19 @@ const styles = StyleSheet.create({
   messageContainer: {
     flexDirection: "row",
     marginVertical: 5,
-    maxWidth: "80%"
+    maxWidth: "88%"
   },
   userMessageContainer: {
+    backgroundColor: "#343434",
     justifyContent: "flex-end",
-    alignSelf: "flex-end"
+    alignSelf: "flex-end",
+    borderRadius: 20
   },
   aiMessageContainer: {
+    backgroundColor: "#00820475",
     justifyContent: "flex-start",
-    alignSelf: "flex-start"
+    alignSelf: "flex-start",
+    borderRadius: 20
   },
   glassEffect: {
     backgroundColor: "rgba(19, 19, 19, 0.272)",
@@ -565,7 +577,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.1)",
     borderRadius: 25,
     paddingHorizontal: 15,
-    marginBottom: 10
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(97, 97, 97, 0.2)",
+    dropShadow: 150,
+    shadowColor: "rgba(134, 134, 134, 0.4)"
   },
   input: {
     flex: 1,
@@ -582,7 +598,7 @@ const styles = StyleSheet.create({
     alignItems: "center"
   },
   refreshButton: {
-    backgroundColor: "#4CAF50",
+    backgroundColor: "#266328b8",
     borderRadius: 25,
     paddingVertical: 10,
     paddingHorizontal: 20,
@@ -623,12 +639,12 @@ const styles = StyleSheet.create({
   tabContainer: {
     width: 40,
     backgroundColor: "#2a2a2a",
-    justifyContent: "space-between", // Changed from "center" to "space-between"
+    justifyContent: "space-between",
     borderLeftWidth: 2,
     borderLeftColor: "rgba(255, 255, 255, 0.336)"
   },
   tab: {
-    flex: 1, // Changed from fixed height to flex: 1
+    flex: 1,
     width: 40,
     alignItems: "center",
     justifyContent: "center",
@@ -637,28 +653,31 @@ const styles = StyleSheet.create({
   },
   activeTab: {
     backgroundColor: "#3a3a3a",
-    borderLeftColor: "#4CAF50"
+    borderLeftColor: "#1fe026"
   },
   tabText: {
     color: "#fff",
     fontSize: 14,
     fontWeight: "bold",
     transform: [{ rotate: "270deg" }],
-    width: 120, // Increased width to accommodate longer text
-    textAlign: "center" // Ensure text is centered
+    width: 120,
+    textAlign: "center"
   },
   chatContainer: {
     flex: 1,
     backgroundColor: "#1a1a1a",
-
     border: "2px solid rgba(255, 255, 255, 0.827)"
   },
   consoleContainer: {
     flex: 1,
-    color: "#4CAF50",
-
+    color: "#1fe026",
     backgroundColor: "#1a1a1a",
     border: "2px solid rgba(255, 255, 255, 0.827)"
+  },
+  codeOutput: {
+    padding: 10,
+    color: "#1fe026"
   }
 });
+
 export default AIAssistantGUI;
