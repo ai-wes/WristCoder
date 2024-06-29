@@ -15,16 +15,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { Audio, InterruptionModeIOS } from "expo-av";
 import * as FileSystem from "expo-file-system";
-import { Canvas, Circle, Group } from "@shopify/react-native-skia";
-import ParticleSphere from "./ParticleSphere";
-import showdown from "showdown";
+import ParticleAudioVisualizer from "./ParticleAudioVisualizer"; // Adjust the import path if necessary
 
 const WEBSOCKET_URL = "ws://192.168.1.224:8888/ws";
 const { width, height } = Dimensions.get("window");
 const VISUALIZATION_SIZE = Math.min(width, height) * 0.6;
-
-// Create a Showdown converter
-const converter = new showdown.Converter();
 
 const AIAssistantGUI = () => {
   const [status, setStatus] = useState("Idle");
@@ -39,6 +34,7 @@ const AIAssistantGUI = () => {
   const [inputRequired, setInputRequired] = useState(false);
   const [inputPrompt, setInputPrompt] = useState("");
   const [response, setResponse] = useState("");
+  const [audioData, setAudioData] = useState(new Uint8Array(128));
 
   const [userInput, setUserInput] = useState("");
   const [currentMessage, setCurrentMessage] = useState("");
@@ -48,7 +44,7 @@ const AIAssistantGUI = () => {
 
   const soundObjectRef = useRef(null);
   const websocketRef = useRef(null);
-  const [particles, setParticles] = useState([]);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     connectWebSocket();
@@ -163,6 +159,13 @@ const AIAssistantGUI = () => {
         break;
       case "audio":
         setAudioQueue((prevQueue) => [...prevQueue, data.audio]);
+        // Convert base64 audio to Uint8Array for visualization
+        const audioArray = new Uint8Array(
+          atob(data.audio)
+            .split("")
+            .map((char) => char.charCodeAt(0))
+        );
+        setAudioData(audioArray);
         break;
     }
     setIsProcessing(false);
@@ -340,25 +343,12 @@ const AIAssistantGUI = () => {
     }
   };
 
-  const ParticleVisualization = () => (
-    <Canvas style={styles.canvas}>
-      <Group>
-        {particles.map((particle, index) => (
-          <Circle
-            key={index}
-            cx={particle.x}
-            cy={particle.y}
-            r={particle.size}
-            color={particle.color}
-          />
-        ))}
-      </Group>
-    </Canvas>
-  );
-
   return (
     <SafeAreaView style={styles.container}>
       <LinearGradient colors={["#000000", "#2f2f2f"]} style={styles.background}>
+        <Text style={styles.status}>
+          Status: {isConnected ? "Connected" : "Disconnected"}
+        </Text>
         <View style={styles.statusBar}>
           <Text style={styles.statusText}>Status: </Text>
           <View
@@ -378,12 +368,11 @@ const AIAssistantGUI = () => {
             {status}
           </Text>
         </View>
-
+        {/* Visualizer at the top */}
+        <View style={styles.visualizerContainer}>
+          <ParticleAudioVisualizer />
+        </View>
         <View style={styles.content}>
-          <View style={styles.visualizerContainer}>
-            <ParticleVisualization />
-          </View>
-
           <View style={styles.chatConsoleContainer}>
             <View style={styles.mainContentArea}>
               {activeTab === "chat" ? (
@@ -522,13 +511,16 @@ const styles = StyleSheet.create({
     marginLeft: 10
   },
   visualizerContainer: {
+    width: VISUALIZATION_SIZE,
+    height: VISUALIZATION_SIZE,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20
+    marginTop: 20
   },
-  canvas: {
+  particleAnimation: {
     width: VISUALIZATION_SIZE,
-    height: VISUALIZATION_SIZE
+    height: VISUALIZATION_SIZE,
+    zIndex: 1
   },
   chatContent: {
     padding: 10
@@ -577,7 +569,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 255, 255, 0.1)",
     borderRadius: 25,
     paddingHorizontal: 15,
-    marginBottom: 10,
+    marginBottom: 5,
     borderWidth: 1,
     borderColor: "rgba(97, 97, 97, 0.2)",
     dropShadow: 150,
@@ -630,7 +622,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     borderRadius: 10,
-    marginBottom: 20,
+    marginBottom: 10,
     overflow: "hidden"
   },
   mainContentArea: {
