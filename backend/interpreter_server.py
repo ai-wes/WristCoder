@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 import uvicorn
 import logging
 from interpreter import interpreter as base_interpreter
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 import uvicorn
 import logging
 from interpreter import interpreter as base_interpreter
@@ -103,7 +103,7 @@ def initialize_interpreter():
     interpreter.offline = True
     interpreter.offline = True
     #interpreter.llm.model = "claude-3-5-sonnet-20240620"
-    interpreter.llm.model = "gpt-4o"
+    interpreter.llm.model = "gpt-3.5-turbo"
     #interpreter.llm.api_base = "http://localhost:11434"
     interpreter.llm.supports_functions = True
     interpreter.llm.execution_instructions = False
@@ -131,12 +131,13 @@ interpreter = initialize_interpreter()
 
 app = FastAPI()
 
+
 def chunked_event_stream(generator):
     try:
         for result in generator:
             if isinstance(result, dict):
                 yield f"data: {json.dumps(result)}\n\n"
-            elif isinstance(result, str):
+            elif isinstance(result, str):  
                 yield f"data: {result}\n\n"
             else:
                 yield f"data: {str(result)}\n\n"
@@ -152,12 +153,15 @@ async def chat_endpoint(request: Request):
         if not message:
             raise HTTPException(status_code=400, detail="Message is required")
         logger.info(f"Received message for interpretation: {message}")
-        return StreamingResponse(chunked_event_stream(interpreter.chat(message, stream=True, display=True)), media_type="text/event-stream")
+        return StreamingResponse(chunked_event_stream(interpreter.chat(message, stream=False, display=True)), media_type="text/event-stream")
+    except HTTPException as e:
+        logger.error(f"HTTPException in chat_endpoint: {e}")
+        raise e
     except Exception as e:
-        logger.error(f"Error in chat_endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error in chat_endpoint: {e}")  
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
-@app.websocket("/ws")
+@app.websocket("/ws") 
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
@@ -170,8 +174,10 @@ async def websocket_endpoint(websocket: WebSocket):
             
             for chunk in interpreter.chat(message, stream=True, display=True):
                 await websocket.send_json(chunk)
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
     except Exception as e:
-        logger.error(f"Error in WebSocket communication: {e}")
+        logger.error(f"Unexpected error in WebSocket communication: {e}")
         await websocket.close()
 
 if __name__ == "__main__":
